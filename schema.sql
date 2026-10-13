@@ -53,3 +53,9 @@ create table if not exists jackpot (
   reset_orders  integer not null default 0,
   last_win      jsonb
 );
+
+-- v2: самостійна реєстрація менеджерів (телефон + PIN)
+alter table managers add column if not exists pin_hash text;
+alter table managers add column if not exists pin_reset boolean not null default false;
+create unique index if not exists managers_phone_uniq on managers (phone) where phone is not null;
+create unique index if not exists managers_odoo_uniq on managers (odoo_user_id) where odoo_user_id is not null;
