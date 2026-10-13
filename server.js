@@ -80,14 +80,16 @@ function normPhone(v) {
   if (d.length === 9) d = "380" + d;
   return /^380\d{9}$/.test(d) ? d : null;
 }
-const hashPin = (phone, pin) => crypto.createHash("sha256").update(SECRET + ":pin:" + phone + ":" + pin).digest("hex");
+const hashPin = (key, pin) => crypto.createHash("sha256").update(SECRET + ":pin:" + key + ":" + pin).digest("hex");
+const pinKey = m => "m" + m.id;
+const pinOk = (m, pin) => !!m.pin_hash && (m.pin_hash === hashPin(pinKey(m), pin) || (m.phone && m.pin_hash === hashPin(m.phone, pin)));
 const validPin = pin => /^\d{4,8}$/.test(String(pin || ""));
 const phoneTries = new Map();
 function limitPhone(phone) {
   const now = Date.now(), a = phoneTries.get(phone) || { n: 0, t: now };
   if (now - a.t > 15 * 60e3) { a.n = 0; a.t = now; }
   a.n++; phoneTries.set(phone, a);
-  if (a.n > 6) throw new HttpError(429, "Забагато спроб для цього номера. Зачекайте 15 хвилин.");
+  if (a.n > 6) throw new HttpError(429, "Забагато спроб. Зачекайте 15 хвилин.");
 }
 async function newSession(managerId) {
   const token = crypto.randomBytes(32).toString("hex");
@@ -96,18 +98,25 @@ async function newSession(managerId) {
 }
 const teamCodeOk = c => !!E.TEAM_CODE && String(c || "").trim().toUpperCase() === String(E.TEAM_CODE).trim().toUpperCase();
 
-// Вхід: телефон + PIN (менеджери) або код (керівник)
+// Пошук менеджера в Odoo за ім'ям і прізвищем (порядок слів не важливий)
+const nameWords = v => String(v || "").toLowerCase().replace(/[’ʼ`']/g, "'").replace(/ё/g, "е").split(/[\s\-]+/).filter(w => w.length > 1);
+function matchOdooUser(users, name) {
+  const want = nameWords(name);
+  return users.filter(u => { const have = nameWords(u.name); return want.length >= 2 && want.every(w => have.includes(w)); });
+}
+
+// Вхід: ім'я + PIN (менеджери) або код (керівник)
 app.post("/api/login", wrap(async (req, res) => {
   limitLogin(req.ip);
-  if (req.body.phone !== undefined) {
-    const phone = normPhone(req.body.phone);
-    if (!phone) throw new HttpError(400, "Вкажіть номер телефону у форматі 0XX XXX XX XX.");
-    limitPhone(phone);
+  if (req.body.name !== undefined) {
     const pin = String(req.body.pin || "").trim();
-    const r = await q("select * from managers where phone = $1", [phone]);
-    const m = r.rows[0];
-    if (!m || !m.pin_hash || m.pin_hash !== hashPin(phone, pin)) throw new HttpError(401, "Невірний телефон або PIN.");
-    attempts.delete(req.ip); phoneTries.delete(phone);
+    const rows = (await q("select * from managers where pin_hash is not null and not is_admin")).rows;
+    const found = matchOdooUser(rows, req.body.name);
+    if (found.length > 1) throw new HttpError(409, "Знайдено кількох людей з таким ім'ям. Впишіть повністю, як при реєстрації.");
+    const m = found[0];
+    limitPhone(m ? "m" + m.id : "x" + nameWords(req.body.name).join(" "));
+    if (!m || !pinOk(m, pin)) throw new HttpError(401, "Невірне ім'я або PIN.");
+    attempts.delete(req.ip); phoneTries.delete("m" + m.id);
     return res.json({ token: await newSession(m.id), pinReset: m.pin_reset });
   }
   const code = String(req.body.code || "").trim();
@@ -127,13 +136,6 @@ app.post("/api/register/users", wrap(async (req, res) => {
   res.json({ ok: true });
 }));
 
-// Пошук менеджера в Odoo за ім'ям і прізвищем (порядок слів не важливий)
-const nameWords = v => String(v || "").toLowerCase().replace(/[’ʼ`']/g, "'").replace(/ё/g, "е").split(/[\s\-]+/).filter(w => w.length > 1);
-function matchOdooUser(users, name) {
-  const want = nameWords(name);
-  return users.filter(u => { const have = nameWords(u.name); return want.length >= 2 && want.every(w => have.includes(w)); });
-}
-
 // Реєстрація: крок 2 — створення менеджера
 app.post("/api/register", wrap(async (req, res) => {
   limitLogin(req.ip);
@@ -141,29 +143,25 @@ app.post("/api/register", wrap(async (req, res) => {
   if (!teamCodeOk(req.body.teamCode)) throw new HttpError(401, "Невірний код команди.");
   const name = String(req.body.name || "").trim().replace(/\s+/g, " ");
   if (name.length < 2 || !name.includes(" ")) throw new HttpError(400, "Вкажіть ім'я та прізвище.");
-  const phone = normPhone(req.body.phone);
-  if (!phone) throw new HttpError(400, "Вкажіть номер телефону у форматі 0XX XXX XX XX.");
   const pin = String(req.body.pin || "").trim();
   if (!validPin(pin)) throw new HttpError(400, "PIN — від 4 до 8 цифр.");
-  let odooId = null;
+  let odooId = null, odooName = null;
   if (odoo.configured()) {
     let users;
     try { users = await odoo.listUsers(); } catch (e) { console.error(e.message); throw new HttpError(503, "Odoo зараз не відповідає. Спробуйте за хвилину."); }
     const found = matchOdooUser(users, name);
     if (!found.length) throw new HttpError(404, "Не знайшли вас в Odoo. Впишіть ім'я та прізвище так, як вони записані в Odoo.");
     if (found.length > 1) throw new HttpError(409, "В Odoo кілька людей з таким ім'ям. Додайте по батькові або зверніться до керівника.");
-    odooId = found[0].id;
+    odooId = found[0].id; odooName = found[0].name;
   }
   try {
-    const r = await q("insert into managers (name, phone, odoo_user_id, pin_hash) values ($1,$2,$3,$4) returning id",
-      [name.slice(0, 80), phone, odooId, hashPin(phone, pin)]);
+    const r = await q("insert into managers (name, odoo_user_id) values ($1,$2) returning id", [(odooName || name).slice(0, 80), odooId]);
+    const id = r.rows[0].id;
+    await q("update managers set pin_hash = $1 where id = $2", [hashPin("m" + id, pin), id]);
     attempts.delete(req.ip);
-    res.json({ token: await newSession(r.rows[0].id) });
+    res.json({ token: await newSession(id) });
   } catch (e) {
-    if (e.code === "23505") {
-      if (String(e.constraint).includes("phone")) throw new HttpError(409, "Цей телефон уже зареєстровано. Увійдіть або попросіть керівника скинути PIN.");
-      throw new HttpError(409, "Цей користувач Odoo вже зайнятий іншим менеджером. Якщо це помилка, зверніться до керівника.");
-    }
+    if (e.code === "23505") throw new HttpError(409, "Ви вже зареєстровані. Увійдіть з PIN або попросіть керівника скинути його.");
     throw e;
   }
 }));
@@ -172,8 +170,7 @@ app.post("/api/register", wrap(async (req, res) => {
 app.post("/api/pin", auth, wrap(async (req, res) => {
   const pin = String(req.body.pin || "").trim();
   if (!validPin(pin)) throw new HttpError(400, "PIN — від 4 до 8 цифр.");
-  if (!req.me.phone) throw new HttpError(400, "У вашому профілі немає телефону.");
-  await q("update managers set pin_hash = $1, pin_reset = false where id = $2", [hashPin(req.me.phone, pin), req.me.id]);
+  await q("update managers set pin_hash = $1, pin_reset = false where id = $2", [hashPin(pinKey(req.me), pin), req.me.id]);
   res.json({ ok: true });
 }));
 app.post("/api/logout", auth, wrap(async (req, res) => { await q("delete from sessions where token = $1", [req.token]); res.json({ ok: true }); }));
@@ -350,9 +347,9 @@ A.post("/managers/:id/pin", wrap(async (req, res) => {
   const id = Number(req.params.id);
   const m = (await q("select * from managers where id = $1", [id])).rows[0];
   if (!m) throw new HttpError(404, "Менеджера не знайдено");
-  if (!m.phone) throw new HttpError(400, "У менеджера немає телефону. Видайте йому код входу.");
+  if (m.is_admin) throw new HttpError(400, "Керівник входить за кодом.");
   const pin = String(crypto.randomInt(0, 10000)).padStart(4, "0");
-  await q("update managers set pin_hash = $1, pin_reset = true where id = $2", [hashPin(m.phone, pin), id]);
+  await q("update managers set pin_hash = $1, pin_reset = true where id = $2", [hashPin(pinKey(m), pin), id]);
   await q("delete from sessions where manager_id = $1", [id]);
   res.json({ pin });
 }));
