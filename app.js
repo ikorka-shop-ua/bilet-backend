@@ -103,7 +103,7 @@ function show() {
 
 /* ---------- login & registration ---------- */
 const fmtPhone = p => p && /^380\d{9}$/.test(p) ? `0${p.slice(3, 5)} ${p.slice(5, 8)} ${p.slice(8, 10)} ${p.slice(10)}` : (p || "");
-const L = { mode: "login", reg: { teamCode: "", users: null } };
+const L = { mode: "login", reg: { teamCode: "", ok: false } };
 async function afterAuth(token) { S.token = token; store.set("bz_token", token); await loadMe(); show(); }
 function renderLogin() {
   const root = $("#vLogin");
@@ -130,17 +130,16 @@ function renderLogin() {
       h("input", { class: "inp code", id: "loginCode", maxlength: "40", "aria-label": "Код входу", placeholder: "КОД" }),
       msg, h("button", { class: "btn primary", type: "submit" }, "Увійти"),
       h("button", { class: "linkbtn", type: "button", style: "font-size:13px;align-self:flex-start", onclick: () => { L.mode = "login"; renderLogin(); } }, "← Вхід за телефоном"));
-  } else if (!L.reg.users) {
+  } else if (!L.reg.ok) {
     form = h("form", { class: "stack", onsubmit: async e => {
       e.preventDefault(); msg.replaceChildren(h("div", { class: "msg" }, "Перевіряємо…"));
       const teamCode = $("#rgTeam").value.trim();
-      try { const r = await api("/api/register/users", { method: "POST", body: { teamCode } }); L.reg = { teamCode, users: r.rows }; renderLogin(); } catch (er) { fail(er); }
+      try { await api("/api/register/users", { method: "POST", body: { teamCode } }); L.reg = { teamCode, ok: true }; renderLogin(); } catch (er) { fail(er); }
     } },
       h("p", { class: "muted", style: "margin:0" }, "Введіть код команди. Його дає керівник."),
       h("input", { class: "inp code", id: "rgTeam", maxlength: "40", "aria-label": "Код команди", placeholder: "КОД КОМАНДИ", required: true }),
       msg, h("button", { class: "btn primary", type: "submit" }, "Далі"));
   } else {
-    const users = L.reg.users;
     form = h("form", { class: "stack", onsubmit: async e => {
       e.preventDefault();
       const pin = $("#rgPin").value, pin2 = $("#rgPin2").value;
@@ -148,14 +147,12 @@ function renderLogin() {
       if (pin !== pin2) { fail(new Error("PIN-коди не збігаються.")); return; }
       msg.replaceChildren(h("div", { class: "msg" }, "Реєструємо…"));
       try {
-        const r = await api("/api/register", { method: "POST", body: { teamCode: L.reg.teamCode, name: $("#rgName").value, phone: $("#rgPhone").value, odoo_user_id: users.length ? $("#rgOdoo").value : null, pin } });
-        L.reg = { teamCode: "", users: null }; L.mode = "login"; await afterAuth(r.token);
+        const r = await api("/api/register", { method: "POST", body: { teamCode: L.reg.teamCode, name: $("#rgName").value, phone: $("#rgPhone").value, pin } });
+        L.reg = { teamCode: "", ok: false }; L.mode = "login"; await afterAuth(r.token);
       } catch (er) { fail(er); }
     } },
-      h("div", { class: "field" }, h("label", { for: "rgName" }, "Ім'я та прізвище"), h("input", { class: "inp", id: "rgName", autocomplete: "name", maxlength: "80", required: true, placeholder: "Олена Коваль" })),
+      h("div", { class: "field" }, h("label", { for: "rgName" }, "Ім'я та прізвище, як в Odoo"), h("input", { class: "inp", id: "rgName", autocomplete: "name", maxlength: "80", required: true, placeholder: "Олена Коваль" })),
       h("div", { class: "field" }, h("label", { for: "rgPhone" }, "Телефон"), h("input", { class: "inp", id: "rgPhone", type: "tel", autocomplete: "tel", required: true, placeholder: "067 123 45 67" })),
-      users.length ? h("div", { class: "field" }, h("label", { for: "rgOdoo" }, "Хто ви в Odoo"),
-        h("select", { class: "inp", id: "rgOdoo", required: true }, h("option", { value: "" }, "Виберіть себе…"), users.map(u => h("option", { value: u.id }, u.name)))) : null,
       h("div", { class: "field" }, h("label", { for: "rgPin" }, "Придумайте PIN (4–8 цифр)"), h("input", { class: "inp code", id: "rgPin", type: "password", inputmode: "numeric", autocomplete: "new-password", maxlength: "8", required: true })),
       h("div", { class: "field" }, h("label", { for: "rgPin2" }, "Повторіть PIN"), h("input", { class: "inp code", id: "rgPin2", type: "password", inputmode: "numeric", autocomplete: "new-password", maxlength: "8", required: true })),
       msg, h("button", { class: "btn primary", type: "submit" }, "Зареєструватися"));
