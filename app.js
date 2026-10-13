@@ -115,9 +115,9 @@ function renderLogin() {
   if (L.mode === "login") {
     form = h("form", { class: "stack", onsubmit: async e => {
       e.preventDefault(); msg.replaceChildren(h("div", { class: "msg" }, "Перевіряємо…"));
-      try { await afterAuth((await api("/api/login", { method: "POST", body: { phone: $("#lgPhone").value, pin: $("#lgPin").value } })).token); } catch (er) { fail(er); }
+      try { await afterAuth((await api("/api/login", { method: "POST", body: { name: $("#lgName").value, pin: $("#lgPin").value } })).token); } catch (er) { fail(er); }
     } },
-      h("div", { class: "field" }, h("label", { for: "lgPhone" }, "Телефон"), h("input", { class: "inp", id: "lgPhone", type: "tel", autocomplete: "tel", placeholder: "067 123 45 67", required: true })),
+      h("div", { class: "field" }, h("label", { for: "lgName" }, "Ім'я та прізвище"), h("input", { class: "inp", id: "lgName", autocomplete: "username", placeholder: "Олена Коваль", required: true })),
       h("div", { class: "field" }, h("label", { for: "lgPin" }, "PIN"), h("input", { class: "inp code", id: "lgPin", type: "password", inputmode: "numeric", autocomplete: "current-password", maxlength: "8", required: true })),
       msg, h("button", { class: "btn primary", type: "submit" }, "Увійти"),
       h("p", { class: "muted", style: "margin:0;font-size:13px" }, "Забули PIN? Попросіть керівника скинути його."),
@@ -129,7 +129,7 @@ function renderLogin() {
     } },
       h("input", { class: "inp code", id: "loginCode", maxlength: "40", "aria-label": "Код входу", placeholder: "КОД" }),
       msg, h("button", { class: "btn primary", type: "submit" }, "Увійти"),
-      h("button", { class: "linkbtn", type: "button", style: "font-size:13px;align-self:flex-start", onclick: () => { L.mode = "login"; renderLogin(); } }, "← Вхід за телефоном"));
+      h("button", { class: "linkbtn", type: "button", style: "font-size:13px;align-self:flex-start", onclick: () => { L.mode = "login"; renderLogin(); } }, "← Вхід менеджера"));
   } else if (!L.reg.ok) {
     form = h("form", { class: "stack", onsubmit: async e => {
       e.preventDefault(); msg.replaceChildren(h("div", { class: "msg" }, "Перевіряємо…"));
@@ -147,12 +147,11 @@ function renderLogin() {
       if (pin !== pin2) { fail(new Error("PIN-коди не збігаються.")); return; }
       msg.replaceChildren(h("div", { class: "msg" }, "Реєструємо…"));
       try {
-        const r = await api("/api/register", { method: "POST", body: { teamCode: L.reg.teamCode, name: $("#rgName").value, phone: $("#rgPhone").value, pin } });
+        const r = await api("/api/register", { method: "POST", body: { teamCode: L.reg.teamCode, name: $("#rgName").value, pin } });
         L.reg = { teamCode: "", ok: false }; L.mode = "login"; await afterAuth(r.token);
       } catch (er) { fail(er); }
     } },
       h("div", { class: "field" }, h("label", { for: "rgName" }, "Ім'я та прізвище, як в Odoo"), h("input", { class: "inp", id: "rgName", autocomplete: "name", maxlength: "80", required: true, placeholder: "Олена Коваль" })),
-      h("div", { class: "field" }, h("label", { for: "rgPhone" }, "Телефон"), h("input", { class: "inp", id: "rgPhone", type: "tel", autocomplete: "tel", required: true, placeholder: "067 123 45 67" })),
       h("div", { class: "field" }, h("label", { for: "rgPin" }, "Придумайте PIN (4–8 цифр)"), h("input", { class: "inp code", id: "rgPin", type: "password", inputmode: "numeric", autocomplete: "new-password", maxlength: "8", required: true })),
       h("div", { class: "field" }, h("label", { for: "rgPin2" }, "Повторіть PIN"), h("input", { class: "inp code", id: "rgPin2", type: "password", inputmode: "numeric", autocomplete: "new-password", maxlength: "8", required: true })),
       msg, h("button", { class: "btn primary", type: "submit" }, "Зареєструватися"));
@@ -438,10 +437,10 @@ function admOrders() {
   const invite = h("div", { class: "panel stack" },
     h("h2", { style: "margin:0" }, "Як менеджерам приєднатися"),
     tc ? h("div", { class: "stack", style: "gap:8px" },
-      h("div", null, "Надішліть менеджерам посилання і код команди. Вони самі зареєструються: ім'я, телефон, себе в Odoo і PIN."),
+      h("div", null, "Надішліть менеджерам посилання і код команди. Вони самі зареєструються: ім'я та прізвище, як в Odoo, і PIN."),
       h("div", { class: "bar" }, h("span", { class: "muted" }, "Код команди:"), h("span", { class: "codebox" }, tc)),
       h("div", { class: "mono", style: "word-break:break-all" }, location.href.split("#")[0]),
-      h("div", null, h("button", { class: "btn sm", onclick: async e => { const t = `Гра «Білет за замовлення»\n${location.href.split("#")[0]}\nКод команди: ${tc}\nЗареєструйтеся: ім'я, телефон, виберіть себе в Odoo і придумайте PIN.`; try { await navigator.clipboard.writeText(t); e.target.textContent = "Скопійовано"; } catch (_) { e.target.textContent = "Не вдалося скопіювати"; } } }, "Скопіювати запрошення")))
+      h("div", null, h("button", { class: "btn sm", onclick: async e => { const t = `Гра «Білет за замовлення»\n${location.href.split("#")[0]}\nКод команди: ${tc}\nЗареєструйтеся: ім'я та прізвище, як в Odoo, і придумайте PIN.`; try { await navigator.clipboard.writeText(t); e.target.textContent = "Скопійовано"; } catch (_) { e.target.textContent = "Не вдалося скопіювати"; } } }, "Скопіювати запрошення")))
       : h("div", { class: "msg err" }, "Реєстрацію вимкнено: на сервері не задано TEAM_CODE. Додайте змінну TEAM_CODE у Railway."));
   return h("div", { class: "stack" },
     A.newCode ? codeNotice(A.newCode.name, A.newCode.code, A.newCode.pin) : null,
@@ -461,7 +460,7 @@ function admOrders() {
 }
 function codeNotice(name, code, isPin) {
   return h("div", { class: "confirm", style: "flex-direction:column;align-items:flex-start" },
-    h("div", null, isPin ? `Тимчасовий PIN для «${name}». Передайте його менеджеру: він увійде з ним за своїм телефоном і одразу задасть новий.` : `Код входу для «${name}». Передайте його особисто. Повторно цей код не показується.`),
+    h("div", null, isPin ? `Тимчасовий PIN для «${name}». Передайте його менеджеру: він увійде зі своїм ім'ям і цим PIN, а потім задасть новий.` : `Код входу для «${name}». Передайте його особисто. Повторно цей код не показується.`),
     h("span", { class: "codebox" }, code),
     h("div", { class: "bar" },
       h("button", { class: "btn sm", onclick: async e => { try { await navigator.clipboard.writeText(code); e.target.textContent = "Скопійовано"; } catch (_) { e.target.textContent = "Виділіть код вручну"; } } }, "Скопіювати"),
@@ -482,7 +481,7 @@ function admManager() {
         h("div", null, h("h2", { style: "margin:0" }, m.name || "Менеджер", m.archived ? h("span", { class: "tag" }, "архів") : null),
           h("div", { class: "muted num" }, [m.phone ? fmtPhone(m.phone) : "Телефон не вказано", m.created_at ? "Зареєстровано " + dFmt.format(new Date(m.created_at)) : ""].filter(Boolean).join(" · "))),
         h("div", { class: "bar" },
-          m.phone && !m.is_admin
+          !m.is_admin
             ? h("button", { class: "btn", onclick: async () => { try { const r = await api(`/api/admin/managers/${A.mgr}/pin`, { method: "POST" }); A.newCode = { name: m.name, code: r.pin, pin: true }; renderAdm(false); } catch (er) { setMsg(er.message); renderAdm(false); } } }, "Скинути PIN")
             : h("button", { class: "btn", onclick: async () => { try { const r = await api(`/api/admin/managers/${A.mgr}/code`, { method: "POST" }); A.newCode = { name: m.name, code: r.code }; renderAdm(false); } catch (er) { setMsg(er.message); renderAdm(false); } } }, "Новий код входу"),
           m.is_admin ? null : h("button", { class: "btn", onclick: async () => { try { await api(`/api/admin/managers/${A.mgr}`, { method: "PATCH", body: { archived: !m.archived } }); A.summary = null; await renderAdm(true); } catch (er) { setMsg(er.message); renderAdm(false); } } }, m.archived ? "Повернути з архіву" : "Перенести в архів"))),
