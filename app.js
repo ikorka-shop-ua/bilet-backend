@@ -101,26 +101,82 @@ function show() {
   if (S.view === "adm") renderAdm(true);
 }
 
-/* ---------- login ---------- */
+/* ---------- login & registration ---------- */
+const fmtPhone = p => p && /^380\d{9}$/.test(p) ? `0${p.slice(3, 5)} ${p.slice(5, 8)} ${p.slice(8, 10)} ${p.slice(10)}` : (p || "");
+const L = { mode: "login", reg: { teamCode: "", users: null } };
+async function afterAuth(token) { S.token = token; store.set("bz_token", token); await loadMe(); show(); }
 function renderLogin() {
   const root = $("#vLogin");
   if (S.token && !S.data) { root.replaceChildren(h("div", { class: "center muted" }, "Завантажуємо…")); return; }
+  const tabs = seg([["login", "Вхід"], ["reg", "Реєстрація"]], L.mode === "admin" ? "login" : L.mode, v => { L.mode = v; renderLogin(); });
   const msg = h("div");
-  root.replaceChildren(h("form", { class: "login panel stack", onsubmit: async e => {
+  const fail = er => msg.replaceChildren(h("div", { class: "msg err" }, er.message));
+  let form;
+  if (L.mode === "login") {
+    form = h("form", { class: "stack", onsubmit: async e => {
+      e.preventDefault(); msg.replaceChildren(h("div", { class: "msg" }, "Перевіряємо…"));
+      try { await afterAuth((await api("/api/login", { method: "POST", body: { phone: $("#lgPhone").value, pin: $("#lgPin").value } })).token); } catch (er) { fail(er); }
+    } },
+      h("div", { class: "field" }, h("label", { for: "lgPhone" }, "Телефон"), h("input", { class: "inp", id: "lgPhone", type: "tel", autocomplete: "tel", placeholder: "067 123 45 67", required: true })),
+      h("div", { class: "field" }, h("label", { for: "lgPin" }, "PIN"), h("input", { class: "inp code", id: "lgPin", type: "password", inputmode: "numeric", autocomplete: "current-password", maxlength: "8", required: true })),
+      msg, h("button", { class: "btn primary", type: "submit" }, "Увійти"),
+      h("p", { class: "muted", style: "margin:0;font-size:13px" }, "Забули PIN? Попросіть керівника скинути його."),
+      h("button", { class: "linkbtn", type: "button", style: "font-size:13px;align-self:flex-start", onclick: () => { L.mode = "admin"; renderLogin(); } }, "Вхід керівника за кодом"));
+  } else if (L.mode === "admin") {
+    form = h("form", { class: "stack", onsubmit: async e => {
+      e.preventDefault(); msg.replaceChildren(h("div", { class: "msg" }, "Перевіряємо…"));
+      try { await afterAuth((await api("/api/login", { method: "POST", body: { code: $("#loginCode").value } })).token); } catch (er) { fail(er); }
+    } },
+      h("input", { class: "inp code", id: "loginCode", maxlength: "40", "aria-label": "Код входу", placeholder: "КОД" }),
+      msg, h("button", { class: "btn primary", type: "submit" }, "Увійти"),
+      h("button", { class: "linkbtn", type: "button", style: "font-size:13px;align-self:flex-start", onclick: () => { L.mode = "login"; renderLogin(); } }, "← Вхід за телефоном"));
+  } else if (!L.reg.users) {
+    form = h("form", { class: "stack", onsubmit: async e => {
+      e.preventDefault(); msg.replaceChildren(h("div", { class: "msg" }, "Перевіряємо…"));
+      const teamCode = $("#rgTeam").value.trim();
+      try { const r = await api("/api/register/users", { method: "POST", body: { teamCode } }); L.reg = { teamCode, users: r.rows }; renderLogin(); } catch (er) { fail(er); }
+    } },
+      h("p", { class: "muted", style: "margin:0" }, "Введіть код команди. Його дає керівник."),
+      h("input", { class: "inp code", id: "rgTeam", maxlength: "40", "aria-label": "Код команди", placeholder: "КОД КОМАНДИ", required: true }),
+      msg, h("button", { class: "btn primary", type: "submit" }, "Далі"));
+  } else {
+    const users = L.reg.users;
+    form = h("form", { class: "stack", onsubmit: async e => {
+      e.preventDefault();
+      const pin = $("#rgPin").value, pin2 = $("#rgPin2").value;
+      if (!/^\d{4,8}$/.test(pin)) { fail(new Error("PIN — від 4 до 8 цифр.")); return; }
+      if (pin !== pin2) { fail(new Error("PIN-коди не збігаються.")); return; }
+      msg.replaceChildren(h("div", { class: "msg" }, "Реєструємо…"));
+      try {
+        const r = await api("/api/register", { method: "POST", body: { teamCode: L.reg.teamCode, name: $("#rgName").value, phone: $("#rgPhone").value, odoo_user_id: users.length ? $("#rgOdoo").value : null, pin } });
+        L.reg = { teamCode: "", users: null }; L.mode = "login"; await afterAuth(r.token);
+      } catch (er) { fail(er); }
+    } },
+      h("div", { class: "field" }, h("label", { for: "rgName" }, "Ім'я та прізвище"), h("input", { class: "inp", id: "rgName", autocomplete: "name", maxlength: "80", required: true, placeholder: "Олена Коваль" })),
+      h("div", { class: "field" }, h("label", { for: "rgPhone" }, "Телефон"), h("input", { class: "inp", id: "rgPhone", type: "tel", autocomplete: "tel", required: true, placeholder: "067 123 45 67" })),
+      users.length ? h("div", { class: "field" }, h("label", { for: "rgOdoo" }, "Хто ви в Odoo"),
+        h("select", { class: "inp", id: "rgOdoo", required: true }, h("option", { value: "" }, "Виберіть себе…"), users.map(u => h("option", { value: u.id }, u.name)))) : null,
+      h("div", { class: "field" }, h("label", { for: "rgPin" }, "Придумайте PIN (4–8 цифр)"), h("input", { class: "inp code", id: "rgPin", type: "password", inputmode: "numeric", autocomplete: "new-password", maxlength: "8", required: true })),
+      h("div", { class: "field" }, h("label", { for: "rgPin2" }, "Повторіть PIN"), h("input", { class: "inp code", id: "rgPin2", type: "password", inputmode: "numeric", autocomplete: "new-password", maxlength: "8", required: true })),
+      msg, h("button", { class: "btn primary", type: "submit" }, "Зареєструватися"));
+  }
+  root.replaceChildren(h("div", { class: "login panel stack" },
+    h("h2", { style: "margin:0" }, L.mode === "admin" ? "Вхід керівника" : "Білет за замовлення"),
+    L.mode === "admin" ? null : tabs, form));
+}
+function pinChangeBox() {
+  const msg = h("div");
+  return h("form", { class: "panel stack", style: "max-width:420px", onsubmit: async e => {
     e.preventDefault();
-    const code = $("#loginCode").value.trim();
-    if (!code) { msg.replaceChildren(h("div", { class: "msg err" }, "Введіть код входу.")); return; }
-    msg.replaceChildren(h("div", { class: "msg" }, "Перевіряємо…"));
-    try {
-      const r = await api("/api/login", { method: "POST", body: { code } });
-      S.token = r.token; store.set("bz_token", r.token); await loadMe(); show();
-    } catch (er) { msg.replaceChildren(h("div", { class: "msg err" }, er.message)); }
+    const pin = $("#npPin").value;
+    if (!/^\d{4,8}$/.test(pin)) { msg.replaceChildren(h("div", { class: "msg err" }, "PIN — від 4 до 8 цифр.")); return; }
+    try { await api("/api/pin", { method: "POST", body: { pin } }); S.data.me.pinReset = false; cabBuilt = null; show(); }
+    catch (er) { msg.replaceChildren(h("div", { class: "msg err" }, er.message)); }
   } },
-    h("h2", { style: "margin:0" }, "Вхід у гру"),
-    h("p", { class: "muted", style: "margin:0" }, "Введіть код, який видав керівник. Вводити його потрібно один раз на кожному пристрої."),
-    h("input", { class: "inp code", id: "loginCode", autocomplete: "one-time-code", maxlength: "40", "aria-label": "Код входу", placeholder: "КОД" }),
-    msg,
-    h("button", { class: "btn primary", type: "submit" }, "Увійти")));
+    h("h2", { style: "margin:0" }, "Придумайте новий PIN"),
+    h("p", { class: "muted", style: "margin:0" }, "Керівник скинув ваш PIN. Задайте свій, щоб продовжити."),
+    h("input", { class: "inp code", id: "npPin", type: "password", inputmode: "numeric", autocomplete: "new-password", maxlength: "8", required: true }),
+    msg, h("button", { class: "btn primary", type: "submit" }, "Зберегти PIN"));
 }
 
 /* ---------- cabinet ---------- */
@@ -128,6 +184,7 @@ async function loadMe() { S.data = await api("/api/me"); }
 let cabBuilt = null;
 function renderCab() {
   const root = $("#vCab");
+  if (S.data.me.pinReset) { root.replaceChildren(h("div", { style: "margin-top:24px" }, pinChangeBox())); cabBuilt = "pin"; return; }
   if (S.data.me.archived) { root.replaceChildren(h("div", { class: "center panel" }, h("h2", null, "Кабінет в архіві"), h("p", { class: "muted" }, "Отримати білети зараз не можна. Якщо це помилка, зверніться до керівника."))); cabBuilt = "arch"; return; }
   if (cabBuilt !== "main") {
     root.replaceChildren(h("div", { class: "cab" },
@@ -341,7 +398,11 @@ async function renderAdm(reload) {
   try {
     if (A.tab === "orders") {
       if (A.mgr) { if (reload || !A.detail) A.detail = await api(`/api/admin/tickets?period=${A.per}&manager_id=${A.mgr}`); body = admManager(); }
-      else { if (reload || !A.summary) A.summary = await api(`/api/admin/summary?period=${A.per}`); if (!A.odooUsers) loadOdooUsers(); body = admOrders(); }
+      else {
+        if (reload || !A.summary) A.summary = await api(`/api/admin/summary?period=${A.per}`);
+        if (A.teamCode === undefined) { try { A.teamCode = (await api("/api/admin/config")).teamCode; } catch (_) { A.teamCode = null; } }
+        if (!A.odooUsers) loadOdooUsers(); body = admOrders();
+      }
     } else {
       if (reload || !A.cfg) A.cfg = await api("/api/admin/config");
       body = A.tab === "boost" ? admBoost() : A.tab === "prizes" ? admPrizes() : admData();
@@ -376,8 +437,17 @@ function admOrders() {
       h("div", { class: "field" }, h("label", { for: "nmPhone" }, "Телефон (необов'язково)"), h("input", { class: "inp", id: "nmPhone", type: "tel", maxlength: "30" })),
       h("div", { class: "field" }, h("label", { for: "nmOdoo" }, "Користувач в Odoo"), odooSelect("nmOdoo", null))),
     addMsg, h("div", null, h("button", { class: "btn primary", type: "submit" }, "Створити й отримати код")));
+  const tc = A.teamCode;
+  const invite = h("div", { class: "panel stack" },
+    h("h2", { style: "margin:0" }, "Як менеджерам приєднатися"),
+    tc ? h("div", { class: "stack", style: "gap:8px" },
+      h("div", null, "Надішліть менеджерам посилання і код команди. Вони самі зареєструються: ім'я, телефон, себе в Odoo і PIN."),
+      h("div", { class: "bar" }, h("span", { class: "muted" }, "Код команди:"), h("span", { class: "codebox" }, tc)),
+      h("div", { class: "mono", style: "word-break:break-all" }, location.href.split("#")[0]),
+      h("div", null, h("button", { class: "btn sm", onclick: async e => { const t = `Гра «Білет за замовлення»\n${location.href.split("#")[0]}\nКод команди: ${tc}\nЗареєструйтеся: ім'я, телефон, виберіть себе в Odoo і придумайте PIN.`; try { await navigator.clipboard.writeText(t); e.target.textContent = "Скопійовано"; } catch (_) { e.target.textContent = "Не вдалося скопіювати"; } } }, "Скопіювати запрошення")))
+      : h("div", { class: "msg err" }, "Реєстрацію вимкнено: на сервері не задано TEAM_CODE. Додайте змінну TEAM_CODE у Railway."));
   return h("div", { class: "stack" },
-    A.newCode ? codeNotice(A.newCode.name, A.newCode.code) : null,
+    A.newCode ? codeNotice(A.newCode.name, A.newCode.code, A.newCode.pin) : null,
     h("div", { class: "bar", style: "justify-content:space-between" }, perPicker(() => renderAdm(true)),
       h("label", { class: "bar", style: "gap:6px;font-weight:600" }, h("input", { type: "checkbox", id: "showArch", checked: A.showArch, onchange: e => { A.showArch = e.target.checked; renderAdm(false); } }), "Показати архів")),
     cards(tot),
@@ -385,14 +455,16 @@ function admOrders() {
       h("thead", null, h("tr", null, h("th", null, "Менеджер"), h("th", { class: "r" }, "Замовлень"), h("th", { class: "r" }, "Очікує"), h("th", { class: "r" }, "Підтверджено"), h("th", { class: "r" }, "Згоріло"), h("th", null, "Останнє замовлення"))),
       h("tbody", null, rows.map(r => h("tr", null,
         h("td", null, h("button", { class: "linkbtn", onclick: () => { A.mgr = r.id; A.sel.clear(); A.confirm = null; A.newCode = null; A.detail = null; renderAdm(true); } }, r.name),
-          r.is_admin ? h("span", { class: "tag" }, "керівник") : null, r.archived ? h("span", { class: "tag" }, "архів") : null, !r.odoo_user_id && !r.is_admin ? h("span", { class: "tag" }, "без Odoo") : null),
+          r.is_admin ? h("span", { class: "tag" }, "керівник") : null, r.archived ? h("span", { class: "tag" }, "архів") : null, !r.odoo_user_id && !r.is_admin ? h("span", { class: "tag" }, "без Odoo") : null,
+          r.phone ? h("div", { class: "muted num", style: "font-size:12px" }, fmtPhone(r.phone)) : null),
         h("td", { class: "r num" }, fmtN(r.n)), h("td", { class: "r num" }, grn(r.pw)), h("td", { class: "r num" }, grn(r.c)), h("td", { class: "r num" }, grn(r.x)),
         h("td", { class: "num muted" }, r.last ? dtFmt.format(new Date(r.last)) : "—")))))) : null,
-    add);
+    invite,
+    h("details", null, h("summary", { class: "muted", style: "cursor:pointer;font-weight:700" }, "Додати менеджера вручну"), h("div", { style: "margin-top:12px" }, add)));
 }
-function codeNotice(name, code) {
+function codeNotice(name, code, isPin) {
   return h("div", { class: "confirm", style: "flex-direction:column;align-items:flex-start" },
-    h("div", null, `Код входу для «${name}». Передайте його менеджеру особисто. Повторно цей код не показується.`),
+    h("div", null, isPin ? `Тимчасовий PIN для «${name}». Передайте його менеджеру: він увійде з ним за своїм телефоном і одразу задасть новий.` : `Код входу для «${name}». Передайте його особисто. Повторно цей код не показується.`),
     h("span", { class: "codebox" }, code),
     h("div", { class: "bar" },
       h("button", { class: "btn sm", onclick: async e => { try { await navigator.clipboard.writeText(code); e.target.textContent = "Скопійовано"; } catch (_) { e.target.textContent = "Виділіть код вручну"; } } }, "Скопіювати"),
@@ -407,13 +479,15 @@ function admManager() {
   const editMsg = h("div");
   return h("div", { class: "stack" },
     h("div", null, h("button", { class: "linkbtn", onclick: () => { A.mgr = null; A.newCode = null; renderAdm(true); } }, "← Усі менеджери")),
-    A.newCode ? codeNotice(A.newCode.name, A.newCode.code) : null,
+    A.newCode ? codeNotice(A.newCode.name, A.newCode.code, A.newCode.pin) : null,
     h("div", { class: "panel stack" },
       h("div", { class: "bar", style: "justify-content:space-between" },
         h("div", null, h("h2", { style: "margin:0" }, m.name || "Менеджер", m.archived ? h("span", { class: "tag" }, "архів") : null),
-          h("div", { class: "muted num" }, [m.phone || "Телефон не вказано", m.created_at ? "Додано " + dFmt.format(new Date(m.created_at)) : ""].filter(Boolean).join(" · "))),
+          h("div", { class: "muted num" }, [m.phone ? fmtPhone(m.phone) : "Телефон не вказано", m.created_at ? "Зареєстровано " + dFmt.format(new Date(m.created_at)) : ""].filter(Boolean).join(" · "))),
         h("div", { class: "bar" },
-          h("button", { class: "btn", onclick: async () => { try { const r = await api(`/api/admin/managers/${A.mgr}/code`, { method: "POST" }); A.newCode = { name: m.name, code: r.code }; renderAdm(false); } catch (er) { setMsg(er.message); renderAdm(false); } } }, "Новий код входу"),
+          m.phone && !m.is_admin
+            ? h("button", { class: "btn", onclick: async () => { try { const r = await api(`/api/admin/managers/${A.mgr}/pin`, { method: "POST" }); A.newCode = { name: m.name, code: r.pin, pin: true }; renderAdm(false); } catch (er) { setMsg(er.message); renderAdm(false); } } }, "Скинути PIN")
+            : h("button", { class: "btn", onclick: async () => { try { const r = await api(`/api/admin/managers/${A.mgr}/code`, { method: "POST" }); A.newCode = { name: m.name, code: r.code }; renderAdm(false); } catch (er) { setMsg(er.message); renderAdm(false); } } }, "Новий код входу"),
           m.is_admin ? null : h("button", { class: "btn", onclick: async () => { try { await api(`/api/admin/managers/${A.mgr}`, { method: "PATCH", body: { archived: !m.archived } }); A.summary = null; await renderAdm(true); } catch (er) { setMsg(er.message); renderAdm(false); } } }, m.archived ? "Повернути з архіву" : "Перенести в архів"))),
       h("form", { class: "bar", onsubmit: async e => {
         e.preventDefault();
