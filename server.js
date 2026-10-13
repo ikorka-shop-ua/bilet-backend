@@ -118,18 +118,21 @@ app.post("/api/login", wrap(async (req, res) => {
   res.json({ token: await newSession(r.rows[0].id) });
 }));
 
-// Реєстрація: крок 1 — перевірка коду команди і список вільних користувачів Odoo
+// Реєстрація: крок 1 — перевірка коду команди
 app.post("/api/register/users", wrap(async (req, res) => {
   limitLogin(req.ip);
   if (!E.TEAM_CODE) throw new HttpError(403, "Реєстрацію вимкнено. Зверніться до керівника.");
   if (!teamCodeOk(req.body.teamCode)) throw new HttpError(401, "Невірний код команди. Уточніть його в керівника.");
   attempts.delete(req.ip);
-  if (!odoo.configured()) return res.json({ rows: [] });
-  let all;
-  try { all = await odoo.listUsers(); } catch (e) { console.error(e.message); throw new HttpError(503, "Odoo зараз не відповідає. Спробуйте за хвилину."); }
-  const taken = new Set((await q("select odoo_user_id from managers where odoo_user_id is not null")).rows.map(r => r.odoo_user_id));
-  res.json({ rows: all.filter(u => !taken.has(u.id)) });
+  res.json({ ok: true });
 }));
+
+// Пошук менеджера в Odoo за ім'ям і прізвищем (порядок слів не важливий)
+const nameWords = v => String(v || "").toLowerCase().replace(/[’ʼ`']/g, "'").replace(/ё/g, "е").split(/[\s\-]+/).filter(w => w.length > 1);
+function matchOdooUser(users, name) {
+  const want = nameWords(name);
+  return users.filter(u => { const have = nameWords(u.name); return want.length >= 2 && want.every(w => have.includes(w)); });
+}
 
 // Реєстрація: крок 2 — створення менеджера
 app.post("/api/register", wrap(async (req, res) => {
@@ -142,12 +145,14 @@ app.post("/api/register", wrap(async (req, res) => {
   if (!phone) throw new HttpError(400, "Вкажіть номер телефону у форматі 0XX XXX XX XX.");
   const pin = String(req.body.pin || "").trim();
   if (!validPin(pin)) throw new HttpError(400, "PIN — від 4 до 8 цифр.");
-  const odooId = Number(req.body.odoo_user_id) || null;
-  if (odoo.configured() && !odooId) throw new HttpError(400, "Виберіть себе у списку користувачів Odoo.");
-  if (odooId) {
+  let odooId = null;
+  if (odoo.configured()) {
     let users;
-    try { users = await odoo.listUsers(); } catch (e) { throw new HttpError(503, "Odoo зараз не відповідає. Спробуйте за хвилину."); }
-    if (!users.some(u => u.id === odooId)) throw new HttpError(400, "Такого користувача в Odoo немає.");
+    try { users = await odoo.listUsers(); } catch (e) { console.error(e.message); throw new HttpError(503, "Odoo зараз не відповідає. Спробуйте за хвилину."); }
+    const found = matchOdooUser(users, name);
+    if (!found.length) throw new HttpError(404, "Не знайшли вас в Odoo. Впишіть ім'я та прізвище так, як вони записані в Odoo.");
+    if (found.length > 1) throw new HttpError(409, "В Odoo кілька людей з таким ім'ям. Додайте по батькові або зверніться до керівника.");
+    odooId = found[0].id;
   }
   try {
     const r = await q("insert into managers (name, phone, odoo_user_id, pin_hash) values ($1,$2,$3,$4) returning id",
