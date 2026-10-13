@@ -2,7 +2,7 @@
 import express from "express";
 import cors from "cors";
 import crypto from "node:crypto";
-import { q, tx, getSetting, setSetting } from "./db.js";
+import { q, tx, getSetting, setSetting, migrate } from "./db.js";
 import { dateKey, monthKey, prevMonth, monthEnd, periodRange, kyivMidnight, addDays, weekStart, tsRange } from "./time.js";
 import { normalizeConfig, mods, outcomes, draw, activeBoosts, BOOSTS, expectedCost } from "./game.js";
 import * as odoo from "./odoo.js";
@@ -333,6 +333,7 @@ async function bootstrapAdmin() {
 const port = Number(E.PORT) || 3000;
 app.listen(port, async () => {
   console.log("Сервер запущено на порту", port);
+  try { await migrate(); console.log("Таблиці бази готові"); } catch (e) { console.error("migrate", e.message); }
   try { await bootstrapAdmin(); } catch (e) { console.error("bootstrap", e.message); }
   startSync();
 });
