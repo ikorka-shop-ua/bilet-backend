@@ -1,8 +1,14 @@
 import pg from "pg";
+import fs from "node:fs";
+
+const url = process.env.DATABASE_URL || "";
+// SSL потрібен для зовнішніх баз (Supabase, публічний Railway URL),
+// але не для внутрішньої мережі Railway і локальної бази. PGSSL=false вимикає примусово.
+const noSsl = /localhost|127\.0\.0\.1|\.railway\.internal|host=\//.test(url) || String(process.env.PGSSL).toLowerCase() === "false";
 
 export const pool = new pg.Pool({
-  connectionString: process.env.DATABASE_URL,
-  ssl: process.env.DATABASE_URL && !/localhost|127\.0\.0\.1/.test(process.env.DATABASE_URL) ? { rejectUnauthorized: false } : false,
+  connectionString: url,
+  ssl: url && !noSsl ? { rejectUnauthorized: false } : false,
   max: 8
 });
 
@@ -21,6 +27,12 @@ export async function tx(fn) {
   } finally {
     client.release();
   }
+}
+
+// Створює таблиці при старті, якщо їх ще немає (schema.sql безпечно запускати повторно)
+export async function migrate() {
+  const sql = fs.readFileSync(new URL("./schema.sql", import.meta.url), "utf8");
+  await pool.query(sql);
 }
 
 // Налаштування гри зберігаються в таблиці settings як JSON
